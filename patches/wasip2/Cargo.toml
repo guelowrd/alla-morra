@@ -1,0 +1,10 @@
+[package]
+name = "wasip2"
+version = "1.0.2+wasi-0.2.9"
+edition = "2021"
+description = "Minimal no_std stub of wasip2 for Miden contract compilation"
+license = "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+
+[lib]
+name = "wasip2"
+path = "src/lib.rs"

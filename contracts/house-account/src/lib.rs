@@ -5,8 +5,8 @@ extern crate alloc;
 use alloc::vec;
 
 use miden::{
-    component, felt, Asset, Felt, NoteType, Recipient, StorageMap, StorageMapAccess, Tag, Word,
-    native_account, output_note,
+    component, felt, Asset, Digest, Felt, NoteType, Recipient, StorageMap, StorageMapAccess, Tag,
+    Word, native_account, output_note,
 };
 
 /// House account component for Morra game settlement.
@@ -76,7 +76,7 @@ impl HouseAccount {
     /// Does NOT clear the settled flag.
     pub fn clear_player_bet(&mut self, round_id: Felt, player_num: Felt) {
         for field in 0u64..8 {
-            self.bets.set(Self::player_key(round_id, player_num, Felt::new(field)), felt!(0));
+            self.bets.set(Self::player_key(round_id, player_num, Felt::from_u64_unchecked(field)), felt!(0));
         }
     }
 
@@ -125,6 +125,23 @@ impl HouseAccount {
         self.bets.get(&Self::settled_key(round_id))
     }
 
+    // ─── Asset intake ─────────────────────────────────────────────────────────
+
+    /// Adds one fungible asset to the house account's vault.
+    ///
+    /// Called by each bet-note script to explicitly transfer the note's bet asset
+    /// into the house vault. In Miden, note assets are NOT automatically added to
+    /// the consuming account's vault; the note script must do this explicitly.
+    /// Because `native_account::add_asset` requires the native-account execution
+    /// context, the call must go through an account component method.
+    ///
+    /// Arguments (4 Felts — the raw word components of one asset):
+    ///   a0..a3  — the four Felt elements of the Asset word [amount, 0, suffix, prefix]
+    pub fn receive_asset(&mut self, a0: Felt, a1: Felt, a2: Felt, a3: Felt) {
+        let asset = Asset::new(Word::from([a0, a1, a2, a3]));
+        native_account::add_asset(asset);
+    }
+
     // ─── Payout note creation ─────────────────────────────────────────────────
 
     /// Returns the well-known P2ID note script root.
@@ -155,10 +172,10 @@ impl HouseAccount {
         recipient_prefix: Felt,
     ) {
         let serial_num = Word::from([s0, s1, s2, s3]);
-        let script_root = Self::p2id_note_root();
+        let script_root = Digest::from_word(Self::p2id_note_root());
         let recipient =
             Recipient::compute(serial_num, script_root, vec![recipient_suffix, recipient_prefix]);
-        let note_idx = output_note::create(Tag::from(felt!(0)), NoteType::Private, recipient);
+        let note_idx = output_note::create(Tag::from(felt!(0)), NoteType::from(felt!(2)), recipient);
         let asset = Asset::new(Word::from([amount, felt!(0), faucet_suffix, faucet_prefix]));
         native_account::remove_asset(asset.clone());
         output_note::add_asset(asset, note_idx);

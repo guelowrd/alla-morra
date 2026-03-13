@@ -1,0 +1,14 @@
+[package]
+name = "getrandom"
+version = "0.3.4"
+edition = "2021"
+description = "Stub getrandom for Miden contracts - no wasip2 dependency"
+license = "MIT OR Apache-2.0"
+
+[features]
+std = []
+wasm_js = []
+
+[lib]
+name = "getrandom"
+path = "src/lib.rs"

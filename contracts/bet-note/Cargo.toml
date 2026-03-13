@@ -21,3 +21,10 @@ package = "miden:bet-note"
 
 [package.metadata.miden]
 project-kind = "note-script"
+
+# Patch wasip2 with a no_std stub to avoid duplicate-core conflict when
+# cargo-miden uses -Z build-std. The real wasip2 crate links extern crate std,
+# which produces a different core hash than build-std's freshly compiled one.
+[patch.crates-io]
+wasip2 = { path = "../../patches/wasip2" }
+wasi = { path = "../../patches/wasi" }
