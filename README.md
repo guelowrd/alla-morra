@@ -182,7 +182,11 @@ cargo miden build --manifest-path contracts/house-account/Cargo.toml --release
 cargo miden build --manifest-path contracts/bet-note/Cargo.toml --release
 
 # Run MockChain integration tests (10 test cases)
+# Note: run without a test-name filter — names are p1_wins, p2_wins, etc.
 cargo test -p integration --release
+
+# If you see stale compile errors, clean first:
+cargo clean -p integration && cargo test -p integration --release
 
 # Build all CLI binaries
 cargo build --release -p integration

@@ -23,8 +23,12 @@ cargo miden build --manifest-path contracts/bet-note/Cargo.toml --release
 ## Tests
 
 ```bash
-cd integration && cargo test -p integration --release -- morra
+cargo test -p integration --release
 ```
+
+Note: test names are `p1_wins`, `p2_wins`, `draw_both_correct`, etc. — not prefixed with "morra", so `-- morra` as a filter matches nothing. Run without a filter to execute all 10 tests.
+
+If you see stale compile errors after changing `helpers.rs` or contract code, run `cargo clean -p integration` first.
 
 ## Key Design Points
 
