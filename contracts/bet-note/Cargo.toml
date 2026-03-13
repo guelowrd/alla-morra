@@ -1,0 +1,23 @@
+[package]
+name = "bet-note"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+miden = { version = "0.10" }
+
+[package.metadata.component]
+package = "miden:bet-note"
+
+# Miden dependencies for cargo-miden build/linking
+[package.metadata.miden.dependencies]
+"miden:house-account" = { path = "../house-account" }
+
+[package.metadata.component.target.dependencies]
+"miden:house-account" = { path = "../house-account/target/generated-wit/" }
+
+[package.metadata.miden]
+project-kind = "note-script"
