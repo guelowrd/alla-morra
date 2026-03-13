@@ -148,6 +148,55 @@ pub fn account_component_from_package(
     Ok(account_component)
 }
 
+/// Creates an account from a compiled package and registers it with the live client.
+pub async fn create_account_from_package(
+    client: &mut Client<FilesystemKeyStore>,
+    package: Arc<Package>,
+    config: AccountCreationConfig,
+) -> Result<Account> {
+    let account_component = account_component_from_package(package, &config)
+        .context("Failed to create account component from package")?;
+
+    let mut init_seed = [0_u8; 32];
+    client.rng().fill_bytes(&mut init_seed);
+
+    let account = AccountBuilder::new(init_seed)
+        .account_type(config.account_type)
+        .storage_mode(config.storage_mode)
+        .with_component(account_component)
+        .with_auth_component(NoAuth)
+        .build()
+        .context("Failed to build account")?;
+
+    client
+        .add_account(&account, false)
+        .await
+        .context("Failed to add account to client")?;
+
+    Ok(account)
+}
+
+/// Creates a note with a random serial number using the client's RNG.
+pub fn create_note_from_package(
+    client: &mut Client<FilesystemKeyStore>,
+    package: Arc<Package>,
+    sender_id: AccountId,
+    config: NoteCreationConfig,
+) -> Result<Note> {
+    let note_program = package.unwrap_program();
+    let note_script = NoteScript::from_parts(
+        note_program.mast_forest().clone(),
+        note_program.entrypoint(),
+    );
+
+    let serial_num = client.rng().draw_word();
+    let note_inputs = NoteInputs::new(config.inputs).context("Failed to create note inputs")?;
+    let recipient = NoteRecipient::new(serial_num, note_script, note_inputs);
+    let metadata = NoteMetadata::new(sender_id, config.note_type, config.tag);
+
+    Ok(Note::new(config.assets, metadata, recipient))
+}
+
 /// Creates a deterministic test account from a compiled package (no live client needed).
 pub async fn create_testing_account_from_package(
     package: Arc<Package>,
