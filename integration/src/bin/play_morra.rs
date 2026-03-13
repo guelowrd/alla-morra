@@ -227,11 +227,11 @@ async fn main() -> Result<()> {
     // ── Step 1: Build contracts ───────────────────────────────────────────────
     println!("[1/8] Building contracts...");
     let house_package = Arc::new(
-        build_project_in_dir(Path::new("../contracts/house-account"), true)
+        build_project_in_dir(Path::new("./contracts/house-account"), true)
             .context("build house-account")?,
     );
     let note_package = Arc::new(
-        build_project_in_dir(Path::new("../contracts/bet-note"), true)
+        build_project_in_dir(Path::new("./contracts/bet-note"), true)
             .context("build bet-note")?,
     );
     println!("  Done.\n");
