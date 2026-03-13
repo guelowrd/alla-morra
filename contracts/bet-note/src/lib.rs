@@ -46,26 +46,47 @@ impl BetNote {
 
         // --- Validate player_num ∈ {1, 2} ---
         let pn = player_num.as_u64();
-        assert(pn == 1 || pn == 2);
+        assert(Felt::from_u64_unchecked((pn == 1 || pn == 2) as u64));
 
         // --- Validate h ∈ {0,1,2,3} and g ∈ {0,1,2,3,4,5,6} ---
-        assert(h.as_u64() <= 3);
-        assert(g.as_u64() <= 6);
+        assert(Felt::from_u64_unchecked((h.as_u64() <= 3) as u64));
+        assert(Felt::from_u64_unchecked((g.as_u64() <= 6) as u64));
 
         // --- Validate exactly one asset with the correct amount ---
         let assets = active_note::get_assets();
-        assert_eq(Felt::new(assets.len() as u64), felt!(1));
+        assert_eq(Felt::from_u64_unchecked(assets.len() as u64), felt!(1));
         assert_eq(assets[0].inner[0], bet_value);
         let faucet_suffix = assets[0].inner[2];
         let faucet_prefix = assets[0].inner[3];
 
-        // --- Branch: house settles, or player reclaims after expiry ---
+        // --- Branch: house settles or processes expiry; non-house forbidden ---
         let account_id = active_account::get_id();
         let is_house = account_id.suffix.as_u64() == house_suffix.as_u64()
                     && account_id.prefix.as_u64() == house_prefix.as_u64();
 
-        if is_house {
-            // ── Settlement path ──────────────────────────────────────────────
+        // Only the house account may consume bet-notes.
+        assert(Felt::from_u64_unchecked(is_house as u64));
+
+        // Transfer note asset into the house vault (requires account component context).
+        let a = assets[0];
+        house_account::receive_asset(a.inner[0], a.inner[1], a.inner[2], a.inner[3]);
+
+        // Check if this note has expired — house handles both paths.
+        let current_block = tx::get_block_number();
+        let is_expired = current_block.as_u64() > expiry_block.as_u64();
+
+        if is_expired {
+            // ── Expiry-recall path: house refunds the player ─────────────────
+            let my_suffix = if pn == 1 { p1_suffix } else { p2_suffix };
+            let my_prefix = if pn == 1 { p1_prefix } else { p2_prefix };
+            house_account::create_payout_note(
+                round_id, felt!(3), felt!(0), felt!(0),
+                bet_value,
+                faucet_suffix, faucet_prefix,
+                my_suffix, my_prefix,
+            );
+        } else {
+        // ── Settlement path ──────────────────────────────────────────────
 
             // Guard: fail immediately if this round was already settled
             assert_eq(house_account::is_round_settled(round_id), felt!(0));
@@ -75,8 +96,8 @@ impl BetNote {
 
             // Participant commitment: XOR of both player ID components.
             // Prevents accidental note mismatches. v2 should use RPO hash.
-            let id_xor_s = Felt::new(p1_suffix.as_u64() ^ p2_suffix.as_u64());
-            let id_xor_p = Felt::new(p1_prefix.as_u64() ^ p2_prefix.as_u64());
+            let id_xor_s = Felt::from_u64_unchecked(p1_suffix.as_u64() ^ p2_suffix.as_u64());
+            let id_xor_p = Felt::from_u64_unchecked(p1_prefix.as_u64() ^ p2_prefix.as_u64());
 
             if opp_registered.as_u64() == 0 {
                 // First note in this tx: store game values and round params.
@@ -138,14 +159,14 @@ impl BetNote {
                 if p1_wins && !p2_wins {
                     house_account::create_payout_note(
                         s0, felt!(1), felt!(0), felt!(0),
-                        Felt::new(winner_payout),
+                        Felt::from_u64_unchecked(winner_payout),
                         faucet_suffix, faucet_prefix,
                         p1_suffix, p1_prefix,
                     );
                 } else if p2_wins && !p1_wins {
                     house_account::create_payout_note(
                         s0, felt!(2), felt!(0), felt!(0),
-                        Felt::new(winner_payout),
+                        Felt::from_u64_unchecked(winner_payout),
                         faucet_suffix, faucet_prefix,
                         p2_suffix, p2_prefix,
                     );
@@ -153,13 +174,13 @@ impl BetNote {
                     // Draw: both correct or both wrong — split evenly
                     house_account::create_payout_note(
                         s0, felt!(1), felt!(0), felt!(0),
-                        Felt::new(draw_payout),
+                        Felt::from_u64_unchecked(draw_payout),
                         faucet_suffix, faucet_prefix,
                         p1_suffix, p1_prefix,
                     );
                     house_account::create_payout_note(
                         s0, felt!(2), felt!(0), felt!(0),
-                        Felt::new(draw_payout),
+                        Felt::from_u64_unchecked(draw_payout),
                         faucet_suffix, faucet_prefix,
                         p2_suffix, p2_prefix,
                     );
@@ -170,21 +191,6 @@ impl BetNote {
                 house_account::mark_round_settled(round_id);
                 house_account::clear_player_bet(round_id, opp_num);
             }
-        } else {
-            // ── Recall path (player self-reclaim after expiry) ────────────────
-
-            // Validate: consuming account is the correct player for this note
-            let my_suffix = if pn == 1 { p1_suffix } else { p2_suffix };
-            let my_prefix = if pn == 1 { p1_prefix } else { p2_prefix };
-            assert_eq(account_id.suffix, my_suffix);
-            assert_eq(account_id.prefix, my_prefix);
-
-            // Validate: note has expired
-            let current_block = tx::get_block_number();
-            assert(current_block.as_u64() > expiry_block.as_u64());
-
-            // bet_value asset transfers automatically to the player's vault on consumption.
-            // No explicit action needed here.
         }
     }
 }

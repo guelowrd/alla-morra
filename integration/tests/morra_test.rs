@@ -10,20 +10,14 @@ use miden_client::{
     transaction::OutputNote,
     Felt, Word,
 };
-use miden_testing::{Auth, MockChain};
+use miden_testing::{Auth, MockChain, MockChainBuilder};
 use std::{path::Path, sync::Arc};
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 /// Extracts the (suffix, prefix) Felt components from an AccountId.
-///
-/// In miden-objects 0.20, AccountId is split into prefix (high bits encoding
-/// account type/storage mode) and suffix (low bits, random component).
-/// These correspond to `active_account::get_id().suffix` and `.prefix` in contracts.
 fn id_felts(id: AccountId) -> (Felt, Felt) {
-    let suffix = id.suffix().as_felt();
-    let prefix = id.prefix().as_felt();
-    (suffix, prefix)
+    (id.suffix(), id.prefix().into())
 }
 
 /// Builds note inputs for a Morra bet note (12 Felts).
@@ -58,8 +52,9 @@ fn make_note_inputs(
 }
 
 /// Shared test setup: builds packages and creates accounts.
+/// Holds the MockChainBuilder (not yet built) so tests can add notes before building.
 struct TestSetup {
-    mock_chain: MockChain,
+    builder: MockChainBuilder,
     house_package: Arc<miden_mast_package::Package>,
     note_package: Arc<miden_mast_package::Package>,
     player1: miden_client::account::Account,
@@ -87,10 +82,7 @@ async fn setup() -> anyhow::Result<TestSetup> {
     // Create house account with empty bets storage map
     let bets_slot =
         StorageSlotName::new("miden::component::miden_house_account::bets").unwrap();
-    let storage_slots = vec![StorageSlot::with_map(
-        bets_slot,
-        StorageMap::default(),
-    )];
+    let storage_slots = vec![StorageSlot::with_map(bets_slot, StorageMap::default())];
     let house_cfg = AccountCreationConfig {
         storage_slots,
         ..Default::default()
@@ -98,15 +90,19 @@ async fn setup() -> anyhow::Result<TestSetup> {
     let house =
         create_testing_account_from_package(house_package.clone(), house_cfg).await?;
 
-    // Create a fungible faucet for the bet asset
-    let faucet = builder.add_existing_faucet(Auth::NoAuth, "MORRA", 1_000_000_000_000)?;
+    // Create a fungible faucet for the bet asset.
+    // total_issuance must be set; the VM validates assets against the faucet's issued supply.
+    let faucet = builder.add_existing_basic_faucet(
+        Auth::BasicAuth,
+        "MORRA",
+        1_000_000_000_000,
+        Some(1_000_000_000_000),
+    )?;
 
     builder.add_account(house.clone())?;
 
-    let mock_chain = builder.build()?;
-
     Ok(TestSetup {
-        mock_chain,
+        builder,
         house_package,
         note_package,
         player1,
@@ -116,7 +112,7 @@ async fn setup() -> anyhow::Result<TestSetup> {
     })
 }
 
-/// Creates both bet notes for a round and adds them to the mock chain.
+/// Creates both bet notes for a round and adds them to the builder.
 fn make_bet_notes(
     setup: &mut TestSetup,
     round_id: u64,
@@ -168,8 +164,8 @@ fn make_bet_notes(
         },
     )?;
 
-    setup.mock_chain.add_output_note(OutputNote::Full(bet_note_1.clone()));
-    setup.mock_chain.add_output_note(OutputNote::Full(bet_note_2.clone()));
+    setup.builder.add_output_note(OutputNote::Full(bet_note_1.clone()));
+    setup.builder.add_output_note(OutputNote::Full(bet_note_2.clone()));
 
     Ok((bet_note_1, bet_note_2))
 }
@@ -194,8 +190,8 @@ async fn p1_wins() -> anyhow::Result<()> {
     let mut s = setup().await?;
     let (n1, n2) = make_bet_notes(&mut s, 1, 1, 2, 1, 0, BET_VALUE, EXPIRY)?;
 
-    let tx_context = s
-        .mock_chain
+    let mut mock_chain = s.builder.build()?;
+    let tx_context = mock_chain
         .build_tx_context(s.house.id(), &[n1.id(), n2.id()], &[])?
         .build()?;
     let executed = tx_context.execute().await?;
@@ -203,7 +199,6 @@ async fn p1_wins() -> anyhow::Result<()> {
     let output_notes: Vec<_> = executed.output_notes().iter().collect();
     assert_eq!(output_notes.len(), 1, "expected 1 payout note for P1 win");
 
-    // Winner payout: 2*BET_VALUE * 0.99
     let payout = expected_winner_payout(BET_VALUE);
     let note_amount = output_notes[0]
         .assets()
@@ -222,8 +217,8 @@ async fn p2_wins() -> anyhow::Result<()> {
     let mut s = setup().await?;
     let (n1, n2) = make_bet_notes(&mut s, 2, 1, 0, 1, 2, BET_VALUE, EXPIRY)?;
 
-    let tx_context = s
-        .mock_chain
+    let mut mock_chain = s.builder.build()?;
+    let tx_context = mock_chain
         .build_tx_context(s.house.id(), &[n1.id(), n2.id()], &[])?
         .build()?;
     let executed = tx_context.execute().await?;
@@ -249,8 +244,8 @@ async fn draw_both_correct() -> anyhow::Result<()> {
     let mut s = setup().await?;
     let (n1, n2) = make_bet_notes(&mut s, 3, 1, 2, 1, 2, BET_VALUE, EXPIRY)?;
 
-    let tx_context = s
-        .mock_chain
+    let mut mock_chain = s.builder.build()?;
+    let tx_context = mock_chain
         .build_tx_context(s.house.id(), &[n1.id(), n2.id()], &[])?
         .build()?;
     let executed = tx_context.execute().await?;
@@ -278,8 +273,8 @@ async fn draw_both_wrong() -> anyhow::Result<()> {
     let mut s = setup().await?;
     let (n1, n2) = make_bet_notes(&mut s, 4, 1, 0, 1, 1, BET_VALUE, EXPIRY)?;
 
-    let tx_context = s
-        .mock_chain
+    let mut mock_chain = s.builder.build()?;
+    let tx_context = mock_chain
         .build_tx_context(s.house.id(), &[n1.id(), n2.id()], &[])?
         .build()?;
     let executed = tx_context.execute().await?;
@@ -309,8 +304,8 @@ async fn invalid_h() -> anyhow::Result<()> {
     let mut s = setup().await?;
     let (n1, n2) = make_bet_notes(&mut s, 10, 4, 0, 1, 0, BET_VALUE, EXPIRY)?; // h1=4 invalid
 
-    let tx_context = s
-        .mock_chain
+    let mut mock_chain = s.builder.build()?;
+    let tx_context = mock_chain
         .build_tx_context(s.house.id(), &[n1.id(), n2.id()], &[])?
         .build()?;
     let result = tx_context.execute().await;
@@ -326,8 +321,8 @@ async fn invalid_g() -> anyhow::Result<()> {
     let mut s = setup().await?;
     let (n1, n2) = make_bet_notes(&mut s, 11, 1, 7, 1, 0, BET_VALUE, EXPIRY)?; // g1=7 invalid
 
-    let tx_context = s
-        .mock_chain
+    let mut mock_chain = s.builder.build()?;
+    let tx_context = mock_chain
         .build_tx_context(s.house.id(), &[n1.id(), n2.id()], &[])?
         .build()?;
     let result = tx_context.execute().await;
@@ -342,7 +337,6 @@ async fn invalid_g() -> anyhow::Result<()> {
 async fn invalid_player_num() -> anyhow::Result<()> {
     let mut s = setup().await?;
 
-    // Manually craft a note with player_num=7
     let faucet_id = s.faucet.id();
     let asset = Asset::Fungible(FungibleAsset::new(faucet_id, BET_VALUE)?);
     let note_assets = NoteAssets::new(vec![asset])?;
@@ -358,9 +352,10 @@ async fn invalid_player_num() -> anyhow::Result<()> {
         Felt::new(BET_VALUE), Felt::new(EXPIRY),
     ];
 
+    let p1_id = s.player1.id();
     let bad_note = create_testing_note_from_package(
         s.note_package.clone(),
-        s.player1.id(),
+        p1_id,
         NoteCreationConfig {
             note_type: NoteType::Private,
             assets: note_assets,
@@ -368,10 +363,10 @@ async fn invalid_player_num() -> anyhow::Result<()> {
             ..Default::default()
         },
     )?;
-    s.mock_chain.add_output_note(OutputNote::Full(bad_note.clone()));
+    s.builder.add_output_note(OutputNote::Full(bad_note.clone()));
 
-    let tx_context = s
-        .mock_chain
+    let mut mock_chain = s.builder.build()?;
+    let tx_context = mock_chain
         .build_tx_context(s.house.id(), &[bad_note.id()], &[])?
         .build()?;
     let result = tx_context.execute().await;
@@ -381,26 +376,37 @@ async fn invalid_player_num() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Player reclaims their own note after expiry_block
+/// After expiry, house processes the expired note and creates a refund note for the player
 #[tokio::test]
 async fn expiry_recall() -> anyhow::Result<()> {
     let mut s = setup().await?;
 
-    // Set expiry to block 1 (already passed in MockChain)
-    let (n1, _n2) = make_bet_notes(&mut s, 20, 1, 2, 1, 0, BET_VALUE, 1)?;
+    // expiry_block = 0: the note expires immediately. After proving one block the
+    // reference block is 1, so tx::get_block_number() == 1 > 0 == expiry_block.
+    let (n1, _n2) = make_bet_notes(&mut s, 20, 1, 2, 1, 0, BET_VALUE, 0)?;
 
-    // Player1 consumes their own note (recall path)
-    let tx_context = s
-        .mock_chain
-        .build_tx_context(s.player1.id(), &[n1.id()], &[])?
+    let mut mock_chain = s.builder.build()?;
+    // Advance to block 1 so that current_block (1) > expiry_block (0).
+    mock_chain.prove_next_block()?;
+
+    // House consumes the expired note and emits a refund output note to player1
+    let tx_context = mock_chain
+        .build_tx_context(s.house.id(), &[n1.id()], &[])?
         .build()?;
     let executed = tx_context.execute().await?;
 
-    // No output notes — assets go directly to player1's vault
+    // Exactly 1 output note — the refund note to player1 with the full bet_value
     let output_notes: Vec<_> = executed.output_notes().iter().collect();
-    assert_eq!(output_notes.len(), 0, "recall should produce no output notes");
+    assert_eq!(output_notes.len(), 1, "expiry recall should produce 1 refund note");
 
-    println!("expiry_recall passed — player reclaimed {BET_VALUE}");
+    let note_amount = output_notes[0]
+        .assets()
+        .and_then(|a| a.iter().next())
+        .map(|a| a.unwrap_fungible().amount())
+        .unwrap_or(0);
+    assert_eq!(note_amount, BET_VALUE, "refund note should contain the full bet_value");
+
+    println!("expiry_recall passed — player refunded {BET_VALUE}");
     Ok(())
 }
 
@@ -408,21 +414,24 @@ async fn expiry_recall() -> anyhow::Result<()> {
 #[tokio::test]
 async fn double_settlement() -> anyhow::Result<()> {
     let mut s = setup().await?;
+
+    // First round of notes
     let (n1, n2) = make_bet_notes(&mut s, 30, 1, 2, 1, 0, BET_VALUE, EXPIRY)?;
+    // Second round of notes — same round_id=30, different h/g so they have different IDs
+    let (n3, n4) = make_bet_notes(&mut s, 30, 2, 3, 0, 1, BET_VALUE, EXPIRY)?;
+
+    let mut mock_chain = s.builder.build()?;
 
     // First settlement succeeds
-    let tx_context = s
-        .mock_chain
+    let tx_context = mock_chain
         .build_tx_context(s.house.id(), &[n1.id(), n2.id()], &[])?
         .build()?;
     let executed = tx_context.execute().await?;
-    s.mock_chain.add_pending_executed_transaction(&executed)?;
-    s.mock_chain.prove_next_block()?;
+    mock_chain.add_pending_executed_transaction(&executed)?;
+    mock_chain.prove_next_block()?;
 
-    // Create a duplicate round with the same round_id (settled flag = 1)
-    let (n3, n4) = make_bet_notes(&mut s, 30, 1, 2, 1, 0, BET_VALUE, EXPIRY)?;
-    let tx_context2 = s
-        .mock_chain
+    // Second settlement attempt on same round_id must fail (settled flag = 1)
+    let tx_context2 = mock_chain
         .build_tx_context(s.house.id(), &[n3.id(), n4.id()], &[])?
         .build()?;
     let result = tx_context2.execute().await;
@@ -437,8 +446,13 @@ async fn double_settlement() -> anyhow::Result<()> {
 async fn faucet_mismatch() -> anyhow::Result<()> {
     let mut s = setup().await?;
 
-    // Create a second faucet
-    let faucet2 = s.mock_chain.add_existing_faucet(Auth::NoAuth, "OTHER", 1_000_000_000_000)?;
+    // Create a second faucet via the builder before building the chain
+    let faucet2 = s.builder.add_existing_basic_faucet(
+        Auth::BasicAuth,
+        "OTHER",
+        1_000_000_000_000,
+        Some(1_000_000_000_000),
+    )?;
 
     let faucet1_id = s.faucet.id();
     let faucet2_id = faucet2.id();
@@ -472,11 +486,11 @@ async fn faucet_mismatch() -> anyhow::Result<()> {
         },
     )?;
 
-    s.mock_chain.add_output_note(OutputNote::Full(n1.clone()));
-    s.mock_chain.add_output_note(OutputNote::Full(n2.clone()));
+    s.builder.add_output_note(OutputNote::Full(n1.clone()));
+    s.builder.add_output_note(OutputNote::Full(n2.clone()));
 
-    let tx_context = s
-        .mock_chain
+    let mut mock_chain = s.builder.build()?;
+    let tx_context = mock_chain
         .build_tx_context(s.house.id(), &[n1.id(), n2.id()], &[])?
         .build()?;
     let result = tx_context.execute().await;
