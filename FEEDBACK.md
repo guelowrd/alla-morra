@@ -14,6 +14,9 @@ Using an Explore sub-agent to locate the `MockChain` API without filling the mai
 **The `build-contracts.sh` hook gave instant feedback.**
 Every contract edit triggered a build automatically. This caught brace/syntax errors immediately rather than at test time.
 
+**Three-binary CLI coordination via serial number worked end-to-end.**
+The `setup_player` / `publish_bet` / `settle_round` split — with a 64-char hex serial as the only coordination primitive between processes — works well. Note reconstruction from (game params + serial_num) is fully deterministic, requires no shared database, and was verified live on testnet with separate data directories per player.
+
 ---
 
 ## What was missing, confusing, or incorrect
@@ -36,8 +39,20 @@ The plan assumed `.prefix().as_felt()` was valid. It isn't — you need `.prefix
 **MockChain block numbering is not documented.**
 Genesis = block 0. `tx::get_block_number()` returns the *reference block* for the transaction, which is 0 at genesis. `prove_next_block()` advances it to 1. The `expiry_recall` test required understanding this to set up the right `expiry_block` value. This belongs in `rust-sdk-testing-patterns`.
 
+**`Felt::as_int()` on the host side, not `as_u64()`.**
+`miden_core::Felt` in Rust integration code exposes `as_int() -> u64`. VM-side contract code uses `as_u64()` (a different context). The confusion caused a compile error in helpers.rs. This distinction belongs in `rust-sdk-pitfalls`.
+
 **The `build-contracts.sh` hook fires for the wrong project directory.**
-When working in a sibling repo (`alla-morra/`), the hook in `agentic-template/project-template/` fires on every edit and produces a blocking error because the contract paths don't match. The hook should either be scoped to `project-template/` only, or should exit silently if no matching contracts are found.
+When working in a sibling repo (`alla-morra/`), the hook in `agentic-template/project-template/` fires on every edit and produces a blocking error because the contract paths don't match. The hook should either be scoped to `project-template/` only, or should exit silently if no matching contracts are found:
+```bash
+[[ "$EDITED_FILE" == *project-template/contracts/* ]] || exit 0
+```
+
+**The agent reported tests as passing from a stale compiled binary.**
+When `cargo test` was run without `cargo clean` after modifying `helpers.rs`, cargo reused the previously compiled test binary. The agent reported "10 tests passing" but the binary was compiled from an older snapshot of the source — the current test file had real compile errors that only appeared when the user ran it on a clean machine. The agent should always run `cargo clean` before claiming tests pass after a dependency change.
+
+**README initially had hardcoded IDs with no explanation of where they come from.**
+The first draft of the how-to-play guide showed hardcoded account IDs in commands without explaining that those IDs come from running `setup_player`. A new user cloning the repo had no path to derive their own. Fixed with a placeholder-based step-by-step guide that maps `<PLAYER1_ID>` back to the output of Step 1.
 
 ---
 
@@ -47,36 +62,28 @@ When working in a sibling repo (`alla-morra/`), the hook in `agentic-template/pr
 - Asset transfer rule: note scripts must call `native_account::add_asset` via an account component method; the kernel will reject direct calls from note context.
 - Block numbering: genesis = 0, `prove_next_block()` advances by 1, `tx::get_block_number()` returns the reference block (not current head).
 - `AccountId` decomposition: `id.suffix()` → `Felt`; `id.prefix()` → `AccountIdPrefix`, convert with `.into()`.
+- `Felt::as_int()` is the host-side Rust method; `as_u64()` is VM-side. Don't mix them in integration code.
 
 **Add to `rust-sdk-patterns`:**
 - Correct `NoteType` construction: `NoteType::from(felt!(2))` for private.
 - Correct `Asset` constructor: `Asset::new(Word::from([amount, felt!(0), faucet_suffix, faucet_prefix]))`.
 - The "receive_asset via component" pattern: when a note needs to transfer its own asset to the consuming account, it must call a component method that calls `native_account::add_asset`.
+- Note reconstruction from serial_num: full `Note` objects can be reconstructed deterministically from (compiled package + inputs + serial_num), useful for multi-process CLI coordination.
 
 **Add to `rust-sdk-testing-patterns`:**
 - `id_felts(id: AccountId) -> (Felt, Felt)` helper using `.suffix()` and `.prefix().into()`.
 - MockChain block numbering and the `prove_next_block()` pattern for expiry tests.
 - `add_existing_basic_faucet(auth, symbol, max_supply, total_issuance: Option<u64>)` signature, and that `total_issuance: Some(x)` is required for the VM to accept issued assets in notes.
+- Run `cargo clean -p integration` before reporting test results after changing shared library code.
 
 **Fix `build-contracts.sh` hook:**
-Scope it to only fire when the edited file is inside `project-template/contracts/`. Add a guard at the top:
-```bash
-[[ "$EDITED_FILE" == *project-template/contracts/* ]] || exit 0
-```
+Scope it to only fire when the edited file is inside `project-template/contracts/`.
+
+**`--data-dir` pattern for multi-player isolation:**
+When multiple CLI processes run on the same machine (or across machines), each needs its own keystore directory and SQLite store. A `--data-dir` flag that creates `{dir}/keystore/` and `{dir}/store.sqlite3` is the right pattern. Worth documenting as a standard approach for multi-account testnet binaries.
 
 **New pattern to capture: house-mediated expiry recall.**
 In Miden, a note script cannot transfer assets back to a player (non-house) account because the player account won't have the house component installed. The correct pattern for expiry/refund is: house always consumes the note and emits a new P2ID-style output note to the player. This "house as intermediary" pattern should be documented as a canonical design for game/escrow contracts.
-
----
-
-**Three-binary coordination via serial number is clean.**
-The `setup_player` / `publish_bet` / `settle_round` split works well as a coordination primitive. The 64-char serial hex is the only thing the house needs from each player after publishing — easy to send over any channel. Note reconstruction from (game params + serial) is fully deterministic and requires no shared state between processes.
-
-**`Felt::as_int()` not `as_u64()`.**
-On the host side (in Rust integration code), `miden_core::Felt` exposes `as_int() -> u64`, not `as_u64()`. The VM-side contract code uses `.as_u64()` (a different `Felt` context), which confused the initial implementation. Document this distinction in `rust-sdk-pitfalls`.
-
-**`data-dir` pattern for multi-player isolation.**
-When testing multiple accounts on the same machine, separate SQLite stores and keystores per player are needed. A `--data-dir` CLI flag that places both `keystore/` and `store.sqlite3` under a single directory is the right pattern. The miden-client `FilesystemKeyStore::new` creates the directory if it doesn't exist.
 
 ---
 
