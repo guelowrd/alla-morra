@@ -2,3 +2,5 @@ target/
 *.sqlite3
 keystore/
 local-node-data/
+# Per-player data directories (contain private keys — never commit)
+*-data/

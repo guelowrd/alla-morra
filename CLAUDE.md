@@ -43,8 +43,22 @@ For SDK patterns, pitfalls, and testing conventions, see the `agentic-template` 
 
 Use the `rust-sdk-patterns`, `rust-sdk-pitfalls`, and `rust-sdk-testing-patterns` skills for detailed guidance.
 
-## Known TODOs
+## CLI Binaries
+
+Three binaries in `integration/src/bin/`:
+
+| Binary | Role | Purpose |
+|--------|------|---------|
+| `setup_player --role house` | House | Deploy house account (once) |
+| `setup_player` | Player | Create wallet + get faucet tokens (once per machine) |
+| `publish_bet` | Player | Submit move for a round; prints serial_num for house |
+| `settle_round` | House | Reconstruct notes from serials and settle |
+
+`--data-dir` isolates keystore + store per player. Default: `..` (same as testnet integration binary).
+
+## Known TODOs / v2
 
 - `p2id_note_root()` in house-account is a placeholder. Replace with the actual P2ID script root from miden-standards once accessible as a constant via `use miden::*`.
-- `id_felts()` in the test uses `suffix().as_felt()` / `prefix().as_felt()` — verify against actual miden-objects 0.20 API.
-- v2: replace XOR commitment with RPO hash for cryptographic binding.
+- Move privacy: current notes are `NoteType::Public` — h/g are visible on-chain. v2 should use `NoteType::Private` with a commit-reveal scheme.
+- Replace XOR commitment with RPO hash for cryptographic binding of player-pair to round.
+- `Felt::as_int()` is the host-side method (miden-core Rust); `as_u64()` is the VM-side method. Don't confuse them in integration code.

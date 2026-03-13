@@ -69,6 +69,17 @@ In Miden, a note script cannot transfer assets back to a player (non-house) acco
 
 ---
 
+**Three-binary coordination via serial number is clean.**
+The `setup_player` / `publish_bet` / `settle_round` split works well as a coordination primitive. The 64-char serial hex is the only thing the house needs from each player after publishing — easy to send over any channel. Note reconstruction from (game params + serial) is fully deterministic and requires no shared state between processes.
+
+**`Felt::as_int()` not `as_u64()`.**
+On the host side (in Rust integration code), `miden_core::Felt` exposes `as_int() -> u64`, not `as_u64()`. The VM-side contract code uses `.as_u64()` (a different `Felt` context), which confused the initial implementation. Document this distinction in `rust-sdk-pitfalls`.
+
+**`data-dir` pattern for multi-player isolation.**
+When testing multiple accounts on the same machine, separate SQLite stores and keystores per player are needed. A `--data-dir` CLI flag that places both `keystore/` and `store.sqlite3` under a single directory is the right pattern. The miden-client `FilesystemKeyStore::new` creates the directory if it doesn't exist.
+
+---
+
 ## Patterns that should become new skills
 
 **`miden-escrow-patterns` skill** — covers contracts where a house/escrow account holds assets between two parties:
